@@ -1,0 +1,120 @@
+#!/usr/bin/env python
+
+import argparse
+import logging
+import lib50
+import os
+import re
+import requests
+import signal
+import sys
+
+from submit50 import assignment, submit
+from submit50 import colors
+
+def sigint_handler(signal_number, stack_frame):
+    print(colors.red('\nInterrupted.'))
+    sys.exit(130)
+signal.signal(signal.SIGINT, sigint_handler)
+    
+def main():
+    args = parse_args(sys.argv[1:])
+    configure_logging(args.verbose)
+    classroom_prefix = "classroom50"
+    username = get_username(args.username)
+    assignment = args.assignment
+    
+    # Big Board override
+    if assignment == 'cs50/problems/2021/fall/challenges/speller':
+        big_board(assignment)
+        return
+
+    try:
+        submit(f"{classroom_prefix}/{assignment}", username)
+    except (AssertionError, RuntimeError, ValueError) as ex:
+        logging.info(colors.red(ex))
+    else:
+        logging.info(colors.green(f'Successfully submitted {args.assignment}.'))
+        message = f'Please visit the following link to view your submission:\n'
+        url = f'https://github.com/{classroom_prefix}/{assignment}-{username}/actions'
+        logging.info(colors.green(message + '\033[4m' + url + '\033[0m'))
+
+def parse_args(args):
+    parser = argparse.ArgumentParser(
+        description='A git wrapper for submitting GitHub Classroom assignments.'
+    )
+    parser.add_argument(
+        '--verbose',
+        action='store_true'
+    )
+    parser.add_argument(
+        'assignment',
+        metavar='ASSIGNMENT',
+        type=str,
+        help='the assignment repository (e.g., classroom50/hello)'
+    )
+    parser.add_argument(
+        'username',
+        nargs='?',
+        metavar='USERNAME',
+        const=None,
+        type=str,
+        help='the github username'
+    )
+
+    return parser.parse_args(args)
+
+def configure_logging(verbose):
+    logging.basicConfig(format='%(message)s', level=logging.DEBUG if verbose else logging.INFO)
+
+def get_username(username):
+    if username is not None:
+        return username
+
+    try:
+
+        # Get GitHub username from environment variable
+        return os.getenv("GITHUB_USER")
+    except:
+
+        # Retrieve github username using github id, this ensure
+        # problem set can be submitted in the case of username change
+        id = os.getenv("RepositoryName")
+        url = f"https://api.github.com/user/{id}"
+        return requests.get(url).json()['login']
+
+def big_board(slug):
+    
+    logger = logging.getLogger("lib50")
+    logger.setLevel(logging.ERROR)
+
+    def prompt(honesty, included, excluded):
+        if honesty:
+            print(colors.yellow("Only these files will be submitted:"))
+            for entry in included:
+                print(entry)
+
+            try:
+                answer = input(colors.yellow(
+                    ("Keeping in mind the course's policy on academic honesty,"
+                    ' are you sure you want to submit these files (yes/no)? ')
+                ))
+            except EOFError:
+                answer = ''
+            
+            try:
+                assert re.fullmatch(r'(?:y|yes)', answer.strip(), re.I)
+                return True
+            except:
+                print("Submission canceled")
+                sys.exit(0)
+        
+        return False
+
+    CONFIG_LOADER = __import__("lib50").config.Loader("submit50")
+    CONFIG_LOADER.scope("files", "include", "exclude", "require")
+    user_name, commit_hash, message = lib50.push("submit50", slug, CONFIG_LOADER, prompt=prompt)
+    print(colors.green(message))
+
+if __name__ == '__main__':
+    main()
